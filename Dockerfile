@@ -1,10 +1,36 @@
+FROM gitpod/workspace-mysql:latest
 
-FROM gitpod/workspace-full-vnc AS base
+RUN sudo apt-get update && \
+    sudo apt-get install -yq xvfb x11vnc xterm openjfx libopenjfx-java openbox wmaker wmaker-utils libgtk-3-dev libgtkextra-dev libgconf2-dev libnss3 libasound2 libxtst-dev && \
+    sudo rm -rf /var/lib/apt/lists/*
 
-RUN sudo apt-get update \
-    && sudo apt-get install -y openjfx libopenjfx-java matchbox \
-    && sudo apt-get clean && sudo rm -rf /var/cache/apt/* && sudo rm -rf /var/lib/apt/lists/* && sudo rm -rf /tmp/*
+# Overwrite this env variable to use a different window manager
+ENV WINDOW_MANAGER="wmaker"
 
-FROM gitpod/workspace-mysql AS db
+USER root
 
-RUN
+# Change the default number of virtual desktops from 4 to 1 (footgun)
+RUN sed -ri "s/<number>4<\/number>/<number>1<\/number>/" /etc/xdg/openbox/rc.xml
+
+# Install novnc
+RUN git clone https://github.com/novnc/noVNC.git /opt/novnc \
+    && git clone https://github.com/novnc/websockify /opt/novnc/utils/websockify
+COPY novnc-index.html /opt/novnc/index.html
+
+# Add VNC startup script
+COPY start-vnc-session.sh /usr/bin/
+RUN chmod +x /usr/bin/start-vnc-session.sh
+
+# This is a bit of a hack. At the moment we have no means of starting background
+# tasks from a Dockerfile. This workaround checks, on each bashrc eval, if the X
+# server is running on screen 0, and if not starts Xvfb, x11vnc and novnc.
+RUN echo "export DISPLAY=:0" >> ~/.bashrc
+RUN echo "[ ! -e /tmp/.X0-lock ] && (/usr/bin/start-vnc-session.sh &> /tmp/display-\${DISPLAY}.log)" >> ~/.bashrc
+
+### checks ###
+# no root-owned files in the home directory
+RUN notOwnedFile=$(find . -not "(" -user gitpod -and -group gitpod ")" -print -quit) \
+    && { [ -z "$notOwnedFile" ] \
+        || { echo "Error: not all files/dirs in $HOME are owned by 'gitpod' user & group"; exit 1; } }
+
+USER gitpod
